@@ -21,7 +21,7 @@ from .ipo.discovery import download_rhp, parse_date, slug
 from .strategy import aitells, gates, topics
 from .strategy.bandit import StyleBandit
 from .strategy.polish import polish
-from .strategy.scoring import post_score
+from .strategy.scoring import external_reactions, post_score
 from .strategy.timing import SlotBandit
 from .strategy.styles import arm_key
 
@@ -535,7 +535,7 @@ class Autopilot:
             verdict = "above" if score >= avg else "below"
             rank = StyleBandit.from_history(scored).ranking()
             top = ", ".join(f"{k} ({m:.2f})" for k, m, _ in [x for x in rank if x[0] in IPO_ARMS][:3])
-            text = (f"post {r['pid']} [{r['style']}/{r['hook']}]: {r['impressions']} impressions, {r['reactions']} reactions, "
+            text = (f"post {r['pid']} [{r['style']}/{r['hook']}]: {r['impressions']} impressions, {external_reactions(r['reactions'])} reactions from others, "
                     f"{r['comments']} comments, {r['reposts']} reposts -> score {score:.2f}, {verdict} the running average "
                     f"{avg:.2f}. Next posts favour: {top}")
             self.store.add_log("review", text)
@@ -1038,7 +1038,7 @@ class Autopilot:
         out = []
         for r in rows:
             first = next((ln.strip() for ln in r["text"].splitlines() if ln.strip()), "")[:110]
-            out.append(f"- \"{first}\" -> {r['impressions']} impressions, {r['reactions']} reactions, "
+            out.append(f"- \"{first}\" -> {r['impressions']} impressions, {external_reactions(r['reactions'])} reactions from others, "
                        f"{r['comments']} comments, {r['reposts']} reposts")
         return out or ["- (none yet)"]
 

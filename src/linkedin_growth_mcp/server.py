@@ -251,9 +251,9 @@ def retire_feedback_rule(rule_id: int) -> dict[str, Any]:
 
 
 @mcp.tool
-async def snapshot_analytics_now() -> dict[str, Any]:
+async def snapshot_analytics_now(force: bool = False) -> dict[str, Any]:
     """Read every young post's live analytics and audience now and append them to the history (the autopilot also does this hourly)."""
-    return await svc.snapshot_analytics()
+    return await svc.snapshot_analytics(force=force)
 
 
 @mcp.tool
@@ -439,6 +439,7 @@ def main() -> None:
     ap.add_argument("--login", action="store_true", help="open a browser to sign in to LinkedIn once")
     ap.add_argument("--authorize-linkedin", action="store_true", help="one-time sign-in that allows posting")
     ap.add_argument("--export-session", action="store_true", help="write LinkedIn cookies to a portable file for Docker")
+    ap.add_argument("--refresh-metrics", action="store_true", help="force refresh analytics for all tracked posts now")
     ap.add_argument("--transport", choices=["stdio", "http"], default="stdio")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
@@ -455,6 +456,16 @@ def main() -> None:
     if args.export_session:
         n = asyncio.run(svc.browser.export_session())
         print(f"Exported {n} cookies to {cfg.session_path}")
+        return
+    if args.refresh_metrics:
+        import time as _t
+        print("Reading live analytics for all tracked posts from LinkedIn...")
+        res = asyncio.run(svc.snapshot_analytics(force=True))
+        n_saved = len(res.get("saved", []))
+        n_failed = len(res.get("failed", []))
+        svc.store.set_kv("last_analytics_snapshot", _t.time())
+        svc.store.add_log("analytics_snapshot", f"{n_saved} posts saved, {n_failed} failed (manual refresh via script)")
+        print(f"Done! {n_saved} post(s) updated, {n_failed} failed.")
         return
     if args.transport == "http":
         asyncio.run(_serve_http(args.host, args.port))

@@ -1120,3 +1120,10 @@ def test_snapshot_keeps_tracking_older_posts_but_only_every_six_hours(svc, monke
     seen.clear()
     asyncio.run(svc.snapshot_analytics())                 # just read: only posts under 72h are due again
     assert seen == ["urn:li:share:0"]
+
+
+def test_author_own_reaction_is_not_engagement():
+    from linkedin_growth_mcp.strategy.scoring import engagement_per_1k, external_reactions
+    assert external_reactions(1) == 0 and external_reactions(0) == 0 and external_reactions(6) == 5
+    assert engagement_per_1k(300, 1, 0, 0) == 0.0
+    assert engagement_per_1k(500, 6, 0, 0) == 10.0

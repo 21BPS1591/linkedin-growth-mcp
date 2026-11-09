@@ -17,7 +17,7 @@ from .strategy import formulas, ownvoice
 from .strategy.bandit import StyleBandit
 from .strategy.hashtags import pick_hashtags
 from .strategy.ideas_seed import SEED_IDEAS
-from .strategy.scoring import post_score
+from .strategy.scoring import external_reactions, post_score
 from .strategy.styles import arm_key
 
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
@@ -549,7 +549,7 @@ class Service:
             return {"ok": None, "note": "not checked yet"}
         return {**s, "checked": datetime.fromtimestamp(s["checked_at"]).strftime("%m-%d %H:%M")}
 
-    async def snapshot_analytics(self, max_age_days: int = 14, max_posts: int = 10) -> dict[str, Any]:
+    async def snapshot_analytics(self, max_age_days: int = 14, max_posts: int = 10, force: bool = False) -> dict[str, Any]:
         """Hourly: read every young post's live analytics page and append the numbers (metrics_log, post_audience, CSV).
 
         Nothing is ever overwritten or deleted. Posts listed in kv 'ignored_posts' (deleted on LinkedIn) are skipped.
@@ -565,6 +565,8 @@ class Service:
         def due(p: Any) -> bool:
             """Young posts (under 72 h) are read every hour; older ones every 6 hours, so every post inside the window
             keeps being tracked without the page budget growing with each new post."""
+            if force:
+                return True
             if now - p["published_at"] < 72 * 3600:
                 return True
             last = self.store.conn.execute("SELECT MAX(captured_at) FROM metrics_log WHERE post_id=?", (p["id"],)).fetchone()[0] or 0
@@ -763,7 +765,7 @@ class Service:
         lines += [f"## Posts ({len(week)} this week, {len(posts)} in total)"]
         for p in week:
             when = datetime.fromtimestamp(p["published_at"]).strftime("%a %d %b %H:%M")
-            m = f"{p['imp']} impressions, {p['rea']} reactions, {p['com']} comments, {p['rep']} reposts" if p["imp"] is not None else "no analytics yet"
+            m = f"{p['imp']} impressions, {external_reactions(p['rea'])} reactions from others, {p['com']} comments, {p['rep']} reposts" if p["imp"] is not None else "no analytics yet"
             lines.append(f"- {when} [{p['style']}/{p['hook']}] {m} - {p['url']}")
         scored = [p for p in posts if p["imp"]]
         if len(scored) > 1:

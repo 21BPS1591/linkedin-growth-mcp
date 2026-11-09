@@ -4,11 +4,21 @@ from __future__ import annotations
 import math
 
 
+AUTHOR_REACTIONS = 1  # the owner reacts to every own post; that one reaction is not audience engagement
+
+
+def external_reactions(reactions: int) -> int:
+    """Reactions from other people: the raw count minus the author's own reaction (never below 0)."""
+    return max(int(reactions) - AUTHOR_REACTIONS, 0)
+
+
 def engagement_per_1k(impressions: int, reactions: int, comments: int, reposts: int) -> float:
-    """Weighted engagement per 1000 impressions (comments and reposts weigh more than reactions)."""
+    """Weighted engagement per 1000 impressions (comments and reposts weigh more than reactions).
+
+    The author's own reaction is excluded so a post nobody reacted to scores zero engagement."""
     if impressions <= 0:
         return 0.0
-    weighted = reactions + 3 * comments + 5 * reposts
+    weighted = external_reactions(reactions) + 3 * comments + 5 * reposts
     return 1000.0 * weighted / impressions
 
 

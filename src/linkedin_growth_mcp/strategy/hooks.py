@@ -8,6 +8,8 @@ import re
 from statistics import mean
 from typing import Any
 
+from .scoring import external_reactions
+
 FEED_CUT = 210  # characters the feed shows before "see more"
 DASHES = ("—", "–")
 _LINK = re.compile(r"https?://|www\.|(?<!\w)@\w|#\w", re.IGNORECASE)
@@ -97,7 +99,7 @@ def hook_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
         out.append({
             "pattern": pattern, "posts": len(items),
             "avg_impressions": round(mean(i["impressions"] for i in items)),
-            "avg_reactions": round(mean(i["reactions"] for i in items), 1),
+            "avg_reactions": round(mean(external_reactions(i["reactions"]) for i in items), 1),
             "avg_comments": round(mean(i["comments"] for i in items), 2),
         })
     out.sort(key=lambda g: g["avg_impressions"], reverse=True)

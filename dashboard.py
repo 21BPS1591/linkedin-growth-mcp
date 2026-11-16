@@ -21,7 +21,25 @@ ROOT = Path(__file__).resolve().parent
 PORT = 8790
 TOKEN = secrets.token_hex(16)  # changes every time the dashboard starts; the page embeds it in each veto form
 SERVER_PORT = 8000
-SAFE_ENV = {"DAILY_GEMINI_CALL_CAP": "16", "DAILY_BROWSER_PAGE_CAP": "30", "POST_HOUR": "9", "MAX_POSTS_PER_WEEK": "7"}
+SAFE_ENV = {"DAILY_GEMINI_CALL_CAP": "16", "DAILY_BROWSER_PAGE_CAP": "30", "POST_HOUR": "9", "MAX_POSTS_PER_WEEK": "7", "IPO_POSTS": "true"}
+sys.path.insert(0, str(ROOT / "src"))
+GROUP_OF = {"ipo": "ipo", "bi_features": "tools", "ai": "tools", "product": "tools", "story": "story", "career": "career"}
+
+
+def posting_rules() -> dict:
+    """What the autopilot is allowed to post, read from the strategy code so this page never drifts from it."""
+    out = {"mix": {"career": 2, "story": 2, "tools": 1}, "styles": ["story", "listicle", "how_to"], "hooks": ["number", "bold_claim", "confession", "question"]}
+    try:
+        from linkedin_growth_mcp.autopilot import PILLAR_ARMS
+        from linkedin_growth_mcp.strategy.topics import GROUP_OF as g, TARGET
+
+        GROUP_OF.update(g)
+        out["mix"] = {k: v for k, v in TARGET.items() if v > 0}
+        out["styles"] = sorted({a.split("|")[0] for a in PILLAR_ARMS})
+        out["hooks"] = sorted({a.split("|")[1] for a in PILLAR_ARMS})
+    except Exception:
+        pass  # the fallback above matches the code as of Nov 2026
+    return out
 
 
 def env() -> dict[str, str]:
@@ -98,6 +116,13 @@ def collect() -> dict:
 
         mode = kv(c, "autonomy")
         add("ok" if mode == "live" else "warn", "Autonomy mode", str(mode))
+
+        ipo_on = cfg["IPO_POSTS"].lower() in ("1", "true", "yes", "on")
+        rules = posting_rules()
+        mix = ", ".join(f"{v:g} {k}" for k, v in rules["mix"].items())
+        add("ok", "Posting scope",
+            f"domain only: {mix} per week; IPO posts and the weekend scorecard are OFF (IPO_POSTS=false)" if not ipo_on
+            else f"IPO posts ON plus {mix} per week")
 
         exps = kv(c, "experiments") or {}
         trial, fmt, slot = exps.get("trial"), kv(c, "format_mode") or "long", kv(c, "post_hours")
@@ -182,15 +207,25 @@ def collect() -> dict:
         overall = ["ok", "warn", "bad"][worst]
 
         posts = c.execute("""
-            SELECT p.id, p.url, p.published_at, d.style, d.hook,
+            SELECT p.id, p.url, p.published_at, d.style, d.hook, i.series,
                    (SELECT impressions FROM metrics_log m WHERE m.post_id=p.id ORDER BY captured_at DESC LIMIT 1) imp,
                    (SELECT reactions FROM metrics_log m WHERE m.post_id=p.id ORDER BY captured_at DESC LIMIT 1) rea,
                    (SELECT comments FROM metrics_log m WHERE m.post_id=p.id ORDER BY captured_at DESC LIMIT 1) com,
                    (SELECT reposts FROM metrics_log m WHERE m.post_id=p.id ORDER BY captured_at DESC LIMIT 1) rep,
-                   (SELECT captured_at FROM metrics_log m WHERE m.post_id=p.id ORDER BY captured_at DESC LIMIT 1) cap
-            FROM posts p JOIN drafts d ON d.id=p.draft_id ORDER BY p.published_at DESC""").fetchall()
+                   (SELECT captured_at FROM metrics_log m WHERE m.post_id=p.id ORDER BY captured_at DESC LIMIT 1) cap,
+                   (SELECT num FROM post_audience a WHERE a.post_id=p.id AND a.value='Out-of-network share'
+                    ORDER BY captured_at DESC LIMIT 1) oon
+            FROM posts p JOIN drafts d ON d.id=p.draft_id LEFT JOIN ideas i ON i.draft_id=p.draft_id
+            ORDER BY p.published_at DESC""").fetchall()
         gone = set(kv(c, "ignored_posts") or [])  # deleted on LinkedIn: hidden here, rows stay in the DB
         posts = [p for p in posts if p["id"] not in gone]
+        # What works: domain posts only (IPO posts are a different audience), averaged by style and by topic group
+        works: dict[str, dict[str, list]] = {"style": {}, "topic": {}}
+        for p in posts:
+            if p["imp"] is None or p["series"] == "ipo":
+                continue
+            works["style"].setdefault(p["style"], []).append(p)
+            works["topic"].setdefault(GROUP_OF.get(p["series"] or "story", "story"), []).append(p)
         weeks: dict[str, dict] = {}  # growth proof: per ISO week, posts and their latest metrics (oldest week = baseline)
         for p in reversed(posts):
             y, w, _ = datetime.fromtimestamp(p["published_at"]).isocalendar()
@@ -213,14 +248,16 @@ def collect() -> dict:
         }
         ideas = c.execute(
             "SELECT id, series, title, priority, status FROM ideas WHERE status IN ('backlog','dropped') "
-            "ORDER BY status='dropped', priority, id LIMIT 60").fetchall()
+            + ("" if ipo_on else "AND series!='ipo' ")
+            + "ORDER BY status='dropped', priority, id LIMIT 60").fetchall()
         jobs = [("Autopilot cycle", "every 60 min"), ("Daily post slot", f"{post_hour}:00 (draft opens 30 min before)"),
+                ("Weekend IPO scorecard", "Sat/Sun after the slot" if ipo_on else "off (IPO_POSTS=false)"),
                 ("Metrics refresh", "every 6 h")]
         dbsize = (ROOT / "data" / "growth.db").stat().st_size / 1e6
     finally:
         c.close()
     return dict(keys=keys, weeks=weeks, all_fol=all_fol, checks=checks, overall=overall, posts=posts, followers=followers, log=log, ipos=ipos, counts=counts,
-                jobs=jobs, errs=errs, dbsize=dbsize, now=now, ideas=ideas)
+                jobs=jobs, errs=errs, dbsize=dbsize, now=now, ideas=ideas, ipo_on=ipo_on, rules=rules, works=works)
 
 
 def set_idea_status(idea_id: int, action: str) -> bool:
@@ -239,15 +276,41 @@ def esc(x) -> str:
     return html.escape(str(x))
 
 
+def pct(x) -> str:
+    return f"{x:.0f}%" if x is not None else "-"
+
+
 def render(d: dict) -> str:
     label = {"ok": "All systems working", "warn": "Working, needs a look", "bad": "Problem, action needed"}[d["overall"]]
     rows = "".join(f'<tr><td><span class="dot {s}"></span></td><td>{esc(n)}</td><td class="mut">{esc(t)}</td></tr>' for s, n, t in d["checks"])
     posts = "".join(
-        f'<tr><td>{esc(stamp(p["published_at"]))}</td><td>{esc(p["style"])}</td>'
+        f'<tr{" class=mutrow" if p["series"] == "ipo" else ""}><td>{esc(stamp(p["published_at"]))}</td>'
+        f'<td class="nw">{esc(GROUP_OF.get(p["series"] or "", p["series"] or "story"))}</td><td>{esc(p["style"])}</td>'
         f'<td class="hook">{"<a href=%s target=_blank>" % esc(p["url"]) if p["url"] else ""}{esc((p["hook"] or "")[:70])}{"</a>" if p["url"] else ""}</td>'
-        f'<td class="n">{p["imp"] if p["imp"] is not None else "-"}</td><td class="n">{p["rea"] or 0}</td>'
-        f'<td class="n">{p["com"] or 0}</td><td class="n">{p["rep"] or 0}</td><td class="mut">{esc(ago(p["cap"]))}</td></tr>'
-        for p in d["posts"]) or '<tr><td colspan="8" class="mut">no posts yet</td></tr>'
+        f'<td class="n">{p["imp"] if p["imp"] is not None else "-"}</td><td class="n">{pct(p["oon"])}</td>'
+        f'<td class="n">{p["rea"] or 0}</td><td class="n">{p["com"] or 0}</td><td class="n">{p["rep"] or 0}</td><td class="mut">{esc(ago(p["cap"]))}</td></tr>'
+        for p in d["posts"]) or '<tr><td colspan="10" class="mut">no posts yet</td></tr>'
+
+    def works_rows(groups: dict[str, list]) -> str:
+        rows_ = sorted(groups.items(), key=lambda kv_: -sum(p["imp"] for p in kv_[1]) / len(kv_[1]))
+        return "".join(
+            f'<tr><td>{esc(k)}</td><td class="n">{len(v)}</td><td class="n">{sum(p["imp"] for p in v) / len(v):.0f}</td>'
+            f'<td class="n">{sum((p["rea"] or 0) for p in v) / len(v):.1f}</td></tr>' for k, v in rows_)
+
+    r = d["rules"]
+    works = (f'<p class="mut" style="margin:0 0 8px">Domain posts only, latest reading per post. These averages are what set the '
+             f'posting rules; groups with 1 or 2 posts are a hint, not proof.</p>'
+             f'<div class="grid" style="margin-top:0"><table><tr><th>Topic</th><th class="n">Posts</th><th class="n">Avg impr.</th><th class="n">Avg react.</th></tr>'
+             f'{works_rows(d["works"]["topic"]) or "<tr><td colspan=4 class=mut>no measured domain posts yet</td></tr>"}</table>'
+             f'<table><tr><th>Style</th><th class="n">Posts</th><th class="n">Avg impr.</th><th class="n">Avg react.</th></tr>'
+             f'{works_rows(d["works"]["style"]) or "<tr><td colspan=4 class=mut>no measured domain posts yet</td></tr>"}</table></div>')
+    rules_rows = [("Weekly mix", ", ".join(f"{v:g} {k}" for k, v in r["mix"].items()) + " (weekdays only)"),
+                  ("Styles allowed", ", ".join(r["styles"]) + "; contrarian, question and case_study are not drawn"),
+                  ("Openers allowed", ", ".join(r["hooks"])),
+                  ("Opener gate", "a draft whose first 4 words match any of the last 10 posts is redrafted"),
+                  ("Prompt", "first line names one specific number or thing; closes with a question answerable in under 10 words"),
+                  ("Posting time", "decided by the running 9:00 / 13:00 / 18:00 test, not by this page")]
+    rules_tbl = "".join(f'<tr><td class="nw">{esc(a)}</td><td class="mut">{esc(b)}</td></tr>' for a, b in rules_rows)
     latest = d["followers"][0]["count"] if d["followers"] else 0
 
     def fol_row(r) -> str:  # a reading far from the newest one is a scrape error (an old parser once grabbed other accounts' counts)
@@ -317,11 +380,13 @@ th{{color:var(--mut);font-weight:600;font-size:12px}}tr:last-child td{{border-bo
 <div class="grid">
 <section class="card"><h2>Health checks</h2><table>{rows}</table></section>
 <section class="card"><h2>Scheduled jobs</h2><table>{jobs}</table><h2 style="margin-top:16px">Data kept (never deleted)</h2><div class="stats">{stats}</div></section>
-<section class="card wide"><h2>Posts and latest metrics</h2><table><tr><th>Published</th><th>Style</th><th>Hook</th><th class="n">Impr.</th><th class="n">Reactions</th><th class="n">Comments</th><th class="n">Reposts</th><th>Read</th></tr>{posts}</table></section>
+<section class="card wide"><h2>Posts and latest metrics</h2><table><tr><th>Published</th><th>Topic</th><th>Style</th><th>Hook</th><th class="n">Impr.</th><th class="n">Out of net.</th><th class="n">Reactions</th><th class="n">Comments</th><th class="n">Reposts</th><th>Read</th></tr>{posts}</table>
+{"" if d["ipo_on"] else '<p class="mut" style="margin:8px 0 0">Greyed rows are the earlier IPO posts; they no longer count toward the style choice.</p>'}</section>
+<section class="card wide"><h2>What works so far</h2>{works}</section>
 <section class="card wide"><h2>Growth proof (vs your starting point)</h2>{proof}</section>
 <section class="card wide"><h2>Gemini keys: which account does which job</h2><table><tr><th>Job</th><th>Google account</th><th>Key</th><th>Used for</th></tr>{keyrows}</table></section>
 <section class="card"><h2>Followers (last 7 readings)</h2><table>{fol}</table></section>
-<section class="card"><h2>Tracked IPOs</h2><table>{ipo}</table></section>
+<section class="card"><h2>{"Tracked IPOs" if d["ipo_on"] else "Posting rules (domain only)"}</h2><table>{ipo if d["ipo_on"] else rules_tbl}</table></section>
 <section class="card wide" id="ideas"><h2>Post ideas: veto what you do not want posted</h2>
 <p class="mut" style="margin:0 0 8px">Queued ideas are posted in the order the topic mix picks them. Veto keeps the idea (nothing is deleted) but the autopilot will never use it; Restore puts it back.</p>
 <table><tr><th>Series</th><th>Idea</th><th>State</th><th></th></tr>{ideas}</table></section>

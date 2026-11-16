@@ -183,6 +183,9 @@ class Service:
     # --- drafting ---
     def _history_scores(self) -> tuple[list[Any], list[tuple[str, str, float]], float]:
         rows = self.store.latest_metrics()
+        if not self.cfg.ipo_posts:  # IPO posts are off: their results must not steer the style choice for domain posts
+            ipo_ids = self.store.ipo_post_ids()
+            rows = [r for r in rows if r["post_id"] not in ipo_ids]
         impressions = [r["impressions"] for r in rows]
         baseline = mean(impressions) if impressions else DEFAULT_BASELINE_IMPRESSIONS
         scored = [

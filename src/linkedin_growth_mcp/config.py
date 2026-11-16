@@ -37,6 +37,7 @@ class Config:
     post_hours: tuple[int, ...] = (9,)  # candidate posting hours; more than one turns on the posting-time bandit
     editor_gate: bool = True  # run the Gemini editor on a draft that passed the deterministic gates
     editor_min_score: float = 7.0  # below this the draft is rewritten once, then the better-scoring version is used
+    ipo_posts: bool = True  # False = never draft or publish IPO posts or the weekend IPO scorecard; only the pillar (domain) topics post
     ipo_max_per_week: int = 2  # quality over quantity: at most this many IPO posts in any 7 days
     ipo_min_quality: float = 6.0  # an IPO must score at least this (0-10, autopilot.ipo_quality) to get a post
     comment_watch_hours: int = 36  # how long after publishing a post is checked for new comments
@@ -192,6 +193,7 @@ def load_config() -> Config:
         post_hours=tuple(sorted({int(x) for x in _env("POST_HOURS", _env("POST_HOUR", "9")).split(",") if x.strip()})),
         editor_gate=_env("EDITOR_GATE", "true").lower() in ("1", "true", "yes", "on"),
         editor_min_score=float(_env("EDITOR_MIN_SCORE", "7")),
+        ipo_posts=_env("IPO_POSTS", "true").lower() in ("1", "true", "yes", "on"),
         ipo_max_per_week=int(_env("IPO_MAX_PER_WEEK", "2")),
         ipo_min_quality=float(_env("IPO_MIN_QUALITY", "6")),
         comment_watch_hours=int(_env("COMMENT_WATCH_HOURS", "36")),

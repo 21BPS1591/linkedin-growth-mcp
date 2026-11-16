@@ -1,7 +1,8 @@
 """Topic mix: which kind of non-IPO post the day should be, plus validation of auto-generated backlog ideas.
 
-Pure functions, no model calls. The weekly mix (balanced, 5 weekdays): 2 IPO/finance, 1 tools (BI or AI), 1 work story,
-1 fresher career post. IPO posts are chosen elsewhere (quality ranking and weekly cap); this module decides among the rest.
+Pure functions, no model calls. The weekly mix (5 weekdays): 2 fresher career posts, 2 work stories, 1 tools (BI or AI).
+Set from the first 14 posts (Nov 2026): career averaged about 400 impressions, story about 300, tools about 240.
+IPO posts are chosen elsewhere (quality ranking, weekly cap, IPO_POSTS switch); this module decides among the rest.
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import re
 from typing import Any
 
 GROUP_OF = {"ipo": "ipo", "bi_features": "tools", "ai": "tools", "product": "tools", "story": "story", "career": "career"}
-TARGET = {"ipo": 2.0, "tools": 1.0, "story": 1.0, "career": 1.0}  # posts per 7 days
+TARGET = {"ipo": 0.0, "tools": 1.0, "story": 2.0, "career": 2.0}  # posts per 7 days
 FLOOR_DAYS = 30  # every group is tried at least this often, whatever the results say
 PERF_WEIGHT = 0.5
 

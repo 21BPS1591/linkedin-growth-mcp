@@ -198,9 +198,29 @@ def banned_term_hits(text: str, terms: list[str] | None) -> list[str]:
     return hits
 
 
-def check_general(text: str, banned_terms: list[str] | None = None, facts: str = "") -> list[str]:
+OPENER_WORDS = 4  # a draft whose first words match a recent post's is a repeat opener (the feed shows the first line first)
+
+
+def _opener_key(line: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", line.lower())[:OPENER_WORDS])
+
+
+def repeated_opener(text: str, recent_openers: list[str]) -> str | None:
+    """The recent first line this draft's first line copies (same first OPENER_WORDS words), else None."""
+    first = next((ln for ln in text.strip().splitlines() if ln.strip()), "")
+    key = _opener_key(first)
+    if len(key.split()) < OPENER_WORDS:
+        return None
+    return next((o for o in recent_openers if _opener_key(o) == key), None)
+
+
+def check_general(text: str, banned_terms: list[str] | None = None, facts: str = "",
+                  recent_openers: list[str] | None = None) -> list[str]:
     """Gates for non-IPO posts: no verified-facts pack exists, so only form, safety and wording are checked."""
     fails: list[str] = []
+    dup = repeated_opener(text, recent_openers or [])
+    if dup:
+        fails.append(f"opens like a recent post ('{dup[:40]}'): write a different first line")
     bad_terms = banned_term_hits(text, banned_terms)
     if bad_terms:
         fails.append(f"mentions off-limits terms: {bad_terms[:6]}")

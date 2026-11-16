@@ -400,6 +400,16 @@ class Store:
             "JOIN metrics m ON m.id=(SELECT id FROM metrics WHERE post_id=p.id ORDER BY captured_at DESC LIMIT 1)"
         ).fetchall()
 
+    def ipo_post_ids(self) -> set[int]:
+        """Ids of published posts drafted from the IPO series."""
+        return {r[0] for r in self.conn.execute(
+            "SELECT p.id FROM posts p JOIN ideas i ON i.draft_id=p.draft_id WHERE i.series='ipo'")}
+
+    def recent_openers(self, n: int = 10) -> list[str]:
+        """First line of the last n published posts, newest first (the gates reject a draft that reuses one)."""
+        rows = self.conn.execute("SELECT d.text FROM posts p JOIN drafts d ON d.id=p.draft_id ORDER BY p.published_at DESC LIMIT ?", (n,))
+        return [next((ln.strip() for ln in r[0].splitlines() if ln.strip()), "") for r in rows]
+
     def post_texts(self) -> list[sqlite3.Row]:
         """Published post text with its latest metrics, oldest first (read-only; feeds the hook report and experiments)."""
         return self.conn.execute(

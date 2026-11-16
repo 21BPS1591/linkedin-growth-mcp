@@ -225,3 +225,16 @@ def test_editor_gate_can_be_switched_off():
     a, _ = _autopilot(1.0, gate=False)
     keep, score, _ = a._editor_round({"draft_id": 1, "text": "t"}, None)
     assert keep is not None and score == 10.0
+
+
+def test_repeated_opener_gate_and_pillar_arms():
+    from linkedin_growth_mcp.strategy import gates
+    from linkedin_growth_mcp.autopilot import PILLAR_ARMS
+    recent = ["I used to think recruiters passed on my college Power BI projects.", "4 roles in my path from intern taught me a lot."]
+    assert gates.repeated_opener("I used to think a slow pipeline was an infra problem.\n\nBody.", recent) == recent[0]
+    assert gates.repeated_opener("4 roles in my path, one lesson each.\n\nBody.", recent) == recent[1]
+    assert gates.repeated_opener("1,000 manual approvals a month was the bottleneck.\n\nBody.", recent) is None
+    text = "I used to think a slow pipeline was an infra problem.\n\n" + "Body text that is long enough to pass the length gate. " * 8
+    assert any("opens like a recent post" in r for r in gates.check_general(text, recent_openers=recent))
+    assert not any("opens like a recent post" in r for r in gates.check_general(text))
+    assert all(not k.startswith("contrarian|") for k in PILLAR_ARMS) and "story|number" in PILLAR_ARMS

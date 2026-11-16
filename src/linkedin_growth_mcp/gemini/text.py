@@ -148,7 +148,14 @@ class GeminiText:
             topic + rules_block + hints_block + voice_block + formula_hint +
             "Write one LinkedIn post for this person, in their voice.\n"
             f"STYLE: {style} - {STYLES[style]}\nHOOK: {hook} - {HOOKS[hook]}\n"
-            "Rules: first line must stop the scroll; short paragraphs; never use em dashes or en dashes; no hashtags spam (max 3 at the end); "
+            "OPENER (the feed shows only the first 210 characters, so this line decides reach): one line, under 20 words, that names "
+            "ONE specific thing from FACTS or the BRIEF (a count, a tool, a job title, a before/after) and what was at stake. The three "
+            "best posts so far opened: '1,000 manual expense approvals every month was the bottleneck...', '4 roles in my path from "
+            "intern to full-time analyst taught me...', 'Most fresher resume bullets get ignored because...'. Never open with "
+            "'I used to think', 'Are you still', 'Should you', a greeting, or the first words of any RECENT POST. No vague question "
+            "as the first line.\n"
+            "CLOSER: end with ONE question the reader can answer in under ten words from their own experience (never 'what do you think?').\n"
+            "Rules: short paragraphs; never use em dashes or en dashes; no hashtags spam (max 3 at the end); "
             "no clickbait lies; concrete details over generalities; " + ("900-1300 characters, ONE idea, a few short paragraphs, no numbered list; " if short else "900-1500 characters; ") + "do not repeat "
             "topics from RECENT POSTS; never touch the NO-GO topics.\n"
             + (f"NEVER mention any of these words or names: {', '.join(banned_terms)}.\n" if banned_terms else "") +

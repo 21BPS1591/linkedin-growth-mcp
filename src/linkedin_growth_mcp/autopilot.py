@@ -98,6 +98,10 @@ WEEKLY_MIN_IPOS = 3  # a scorecard of fewer listings is not worth a post
 WEEKLY_SCORECARD_ENABLED = False  # owner decision 2026-10-31: never post a weekly scorecard
 STEP = "compare"  # one post per IPO
 # Arms the learning loop may pick from for IPO posts (styles that suit a data-led breakdown x opening types)
+# Arms for domain (pillar) posts. From the first 14 posts: story and listicle with a number or bold-claim opener led reach
+# (476 to 533 impressions); every contrarian post was in the bottom four (134 to 217). question and case_study stay out
+# until there is a reason to retry them; contrarian is excluded on evidence.
+PILLAR_ARMS = {arm_key(s, h) for s in ("story", "listicle", "how_to") for h in ("number", "bold_claim", "confession", "question")}
 IPO_ARMS = {arm_key(s, h) for s in ("case_study", "listicle", "question", "contrarian")
             for h in ("bold_claim", "number", "question")}
 
@@ -276,6 +280,8 @@ class Autopilot:
     def next_candidate(self, today: date | None = None) -> tuple[Any, dict[str, Any], str] | None:
         """All open IPOs are queued, closing soonest first (largest revenue breaks ties); one gets posted per day."""
         today = today or date.today()
+        if not self.cfg.ipo_posts:
+            return None  # IPO posts are switched off (IPO_POSTS=false)
         if self.posted_on(today) or not self.is_post_day(today):
             return None
         week_start = time.time() - 7 * 86400
@@ -1124,12 +1130,13 @@ class Autopilot:
         draft = None
         best: tuple[float, dict[str, Any], int] | None = None
         for _ in range(MAX_BLOCKED_ATTEMPTS):
-            cand = self.svc.propose_post(idea["id"], hints=reasons or None)
+            cand = self.svc.propose_post(idea["id"], arms=PILLAR_ARMS, hints=reasons or None)
             tidy = polish(cand["text"])
             if tidy != cand["text"]:
                 self.store.update_draft(cand["draft_id"], text=tidy)
                 cand["text"] = tidy
-            reasons = gates.check_general(cand["text"], self.store.get_kv("banned_terms", []) or [], self.svc.idea_facts(idea))
+            reasons = gates.check_general(cand["text"], self.store.get_kv("banned_terms", []) or [], self.svc.idea_facts(idea),
+                                         recent_openers=self.store.recent_openers())
             if not reasons:
                 self._log_ai_tells(cand)
                 keep, score, reasons = self._editor_round(cand, best)
@@ -1158,7 +1165,7 @@ class Autopilot:
         """Saturday (Sunday as fallback): post the scorecard of IPOs that listed in the past 7 days, once per ISO week."""
         today = today or date.today()
         mode = self.mode()
-        if not WEEKLY_SCORECARD_ENABLED or mode == "off" or today.weekday() not in (5, 6):
+        if not self.cfg.ipo_posts or not WEEKLY_SCORECARD_ENABLED or mode == "off" or today.weekday() not in (5, 6):
             return None
         week = today.strftime("%G-W%V")
         if self.store.get_kv("last_weekly", "") == week:

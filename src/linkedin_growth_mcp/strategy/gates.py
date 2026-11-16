@@ -107,6 +107,9 @@ def ungrounded_numbers(text: str, facts: str) -> list[float]:
 
 
 HASHTAG = re.compile(r"(?<!\w)#\w+")
+GENERAL_LENGTH = (350, 3000)  # characters a post may have
+MAX_HASHTAGS = 3
+RECENT_OPENERS = 10  # how many recent posts the repeat-opener gate compares against
 BARE_OPEN = re.compile(r"^[^\w₹$]{0,3}[₹$]?\s?\d")
 MANY_DECIMALS = re.compile(r"(?<![\w.])\d[\d,]*\.\d{3,}")
 PROCEEDS_CLAIM = re.compile(
@@ -144,8 +147,8 @@ def style_problems(text: str, facts: str) -> list[str]:
         out.append("opens with a bare number: start with a plain-English sentence about the business")
     if MANY_DECIMALS.search(text):
         out.append("uses numbers with 3+ decimals: round to whole crore / one decimal")
-    if len(HASHTAG.findall(text)) > 3:
-        out.append("more than 3 hashtags")
+    if len(HASHTAG.findall(text)) > MAX_HASHTAGS:
+        out.append(f"more than {MAX_HASHTAGS} hashtags")
     if not comparison_shown(text, facts):
         out.append("does not show the side-by-side comparison numbers: include the 'Computed:' figures "
                    "(growth, margins, P/E, scale) as short comparison lines")
@@ -167,8 +170,8 @@ def check_post(text: str, facts: str, series: str, banned_terms: list[str] | Non
     fails += style_problems(text, facts)
     if "[TBD" in text:
         fails.append("contains [TBD] placeholders")
-    if not 350 <= len(text) <= 3000:
-        fails.append(f"length {len(text)} outside 350-3000 characters")
+    if not GENERAL_LENGTH[0] <= len(text) <= GENERAL_LENGTH[1]:
+        fails.append(f"length {len(text)} outside {GENERAL_LENGTH[0]}-{GENERAL_LENGTH[1]} characters")
     if LINK_OR_MENTION.search(text):
         fails.append("contains a link or @mention")
     hit = FORBIDDEN.search(text)
@@ -226,8 +229,8 @@ def check_general(text: str, banned_terms: list[str] | None = None, facts: str =
         fails.append(f"mentions off-limits terms: {bad_terms[:6]}")
     if "[TBD" in text:
         fails.append("contains [TBD] placeholders")
-    if not 350 <= len(text) <= 3000:
-        fails.append(f"length {len(text)} outside 350-3000 characters")
+    if not GENERAL_LENGTH[0] <= len(text) <= GENERAL_LENGTH[1]:
+        fails.append(f"length {len(text)} outside {GENERAL_LENGTH[0]}-{GENERAL_LENGTH[1]} characters")
     if LINK_OR_MENTION.search(text):
         fails.append("contains a link or @mention")
     hit = FORBIDDEN.search(text)
@@ -239,8 +242,8 @@ def check_general(text: str, banned_terms: list[str] | None = None, facts: str =
         # attached (the numbers gate below then confirms the figure is sourced). Currency or bare figures stay banned.
         if not re.match(r"^\s*[\d,]+\s+[A-Za-z]", first) or not facts.strip():
             fails.append("opens with a bare number or currency (allowed only as '<count> <thing>' sourced from the story bank)")
-    if len(HASHTAG.findall(text)) > 3:
-        fails.append("more than 3 hashtags")
+    if len(HASHTAG.findall(text)) > MAX_HASHTAGS:
+        fails.append(f"more than {MAX_HASHTAGS} hashtags")
     if re.search(r"[\u2013\u2014]", text):
         fails.append("contains an em or en dash")
     if facts.strip():  # owner's story bank attached: every figure must come from it

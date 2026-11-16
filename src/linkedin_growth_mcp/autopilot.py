@@ -1136,7 +1136,7 @@ class Autopilot:
                 self.store.update_draft(cand["draft_id"], text=tidy)
                 cand["text"] = tidy
             reasons = gates.check_general(cand["text"], self.store.get_kv("banned_terms", []) or [], self.svc.idea_facts(idea),
-                                         recent_openers=self.store.recent_openers())
+                                         recent_openers=self.store.recent_openers(gates.RECENT_OPENERS))
             if not reasons:
                 self._log_ai_tells(cand)
                 keep, score, reasons = self._editor_round(cand, best)

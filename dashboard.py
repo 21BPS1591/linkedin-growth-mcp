@@ -1,6 +1,9 @@
 """Local health dashboard for the LinkedIn Growth MCP. Read-only, with ONE exception: the idea Veto/Restore buttons
 change an idea's status (backlog <-> dropped) in growth.db. Nothing is ever deleted and the server is never touched.
 
+Every rule, mix, style list and schedule on the page is read from the package (linkedin_growth_mcp.describe), never typed
+here, so a change to the autopilot code shows up on the page by itself. Do not add rule text to this file.
+
 Run: dashboard.cmd  ->  http://127.0.0.1:8790  (auto-refreshes every 60 s)
 Stdlib only, so it runs with the project venv or any Python 3.11+.
 """
@@ -21,37 +24,9 @@ ROOT = Path(__file__).resolve().parent
 PORT = 8790
 TOKEN = secrets.token_hex(16)  # changes every time the dashboard starts; the page embeds it in each veto form
 SERVER_PORT = 8000
-SAFE_ENV = {"DAILY_GEMINI_CALL_CAP": "16", "DAILY_BROWSER_PAGE_CAP": "30", "POST_HOUR": "9", "MAX_POSTS_PER_WEEK": "7", "IPO_POSTS": "true"}
 sys.path.insert(0, str(ROOT / "src"))
-GROUP_OF = {"ipo": "ipo", "bi_features": "tools", "ai": "tools", "product": "tools", "story": "story", "career": "career"}
-
-
-def posting_rules() -> dict:
-    """What the autopilot is allowed to post, read from the strategy code so this page never drifts from it."""
-    out = {"mix": {"career": 2, "story": 2, "tools": 1}, "styles": ["story", "listicle", "how_to"], "hooks": ["number", "bold_claim", "confession", "question"]}
-    try:
-        from linkedin_growth_mcp.autopilot import PILLAR_ARMS
-        from linkedin_growth_mcp.strategy.topics import GROUP_OF as g, TARGET
-
-        GROUP_OF.update(g)
-        out["mix"] = {k: v for k, v in TARGET.items() if v > 0}
-        out["styles"] = sorted({a.split("|")[0] for a in PILLAR_ARMS})
-        out["hooks"] = sorted({a.split("|")[1] for a in PILLAR_ARMS})
-    except Exception:
-        pass  # the fallback above matches the code as of Nov 2026
-    return out
-
-
-def env() -> dict[str, str]:
-    out = dict(SAFE_ENV)
-    try:
-        for line in (ROOT / ".env").read_text(encoding="utf-8-sig").splitlines():
-            k, _, v = line.partition("=")
-            if k.strip() in SAFE_ENV and v.strip():
-                out[k.strip()] = v.strip()
-    except OSError:
-        pass
-    return out
+from linkedin_growth_mcp import describe  # noqa: E402  (the page describes the code; nothing is retyped here)
+from linkedin_growth_mcp.config import load_config  # noqa: E402
 
 
 def db() -> sqlite3.Connection:
@@ -96,7 +71,7 @@ def port_open(port: int) -> bool:
 
 
 def collect() -> dict:
-    cfg = env()
+    cfg = load_config()  # secrets stay in memory and are never rendered: only named, non-secret fields are read below
     now = time.time()
     today = time.strftime("%Y-%m-%d")
     checks: list[tuple[str, str, str]] = []  # (state ok|warn|bad, name, detail)
@@ -117,12 +92,8 @@ def collect() -> dict:
         mode = kv(c, "autonomy")
         add("ok" if mode == "live" else "warn", "Autonomy mode", str(mode))
 
-        ipo_on = cfg["IPO_POSTS"].lower() in ("1", "true", "yes", "on")
-        rules = posting_rules()
-        mix = ", ".join(f"{v:g} {k}" for k, v in rules["mix"].items())
-        add("ok", "Posting scope",
-            f"domain only: {mix} per week; IPO posts and the weekend scorecard are OFF (IPO_POSTS=false)" if not ipo_on
-            else f"IPO posts ON plus {mix} per week")
+        ipo_on = cfg.ipo_posts
+        add("ok", "Posting scope", describe.scope(cfg))
 
         exps = kv(c, "experiments") or {}
         trial, fmt, slot = exps.get("trial"), kv(c, "format_mode") or "long", kv(c, "post_hours")
@@ -149,7 +120,7 @@ def collect() -> dict:
 
         posted_today = c.execute("SELECT COUNT(*) FROM posts WHERE date(published_at,'unixepoch','localtime')=?", (today,)).fetchone()[0]
         hour = datetime.now().hour
-        post_hour = int(cfg["POST_HOUR"])
+        post_hour = cfg.post_hour
         # The autopilot posts on weekdays only (minus listed holidays / kv skip_dates), so a day off is not a problem.
         post_day = datetime.now().weekday() < 5 and today not in set(kv(c, "skip_dates") or [])
         try:
@@ -189,7 +160,7 @@ def collect() -> dict:
             else:
                 add("ok" if used < cap - 2 else "warn" if used < cap else "bad", f"Gemini {k['purpose']} key ({k['account']})",
                     f"{used} of {cap} today")
-        b, bcap = usage.get("browser_page", 0), int(cfg["DAILY_BROWSER_PAGE_CAP"])
+        b, bcap = usage.get("browser_page", 0), cfg.daily_browser_page_cap
         add("ok" if b < bcap * 0.8 else "warn" if b < bcap else "bad", "Browser pages today", f"{b} of {bcap}")
 
         bk = kv(c, "last_backup")
@@ -225,7 +196,7 @@ def collect() -> dict:
             if p["imp"] is None or p["series"] == "ipo":
                 continue
             works["style"].setdefault(p["style"], []).append(p)
-            works["topic"].setdefault(GROUP_OF.get(p["series"] or "story", "story"), []).append(p)
+            works["topic"].setdefault(describe.topic_group(p["series"]), []).append(p)
         weeks: dict[str, dict] = {}  # growth proof: per ISO week, posts and their latest metrics (oldest week = baseline)
         for p in reversed(posts):
             y, w, _ = datetime.fromtimestamp(p["published_at"]).isocalendar()
@@ -250,9 +221,8 @@ def collect() -> dict:
             "SELECT id, series, title, priority, status FROM ideas WHERE status IN ('backlog','dropped') "
             + ("" if ipo_on else "AND series!='ipo' ")
             + "ORDER BY status='dropped', priority, id LIMIT 60").fetchall()
-        jobs = [("Autopilot cycle", "every 60 min"), ("Daily post slot", f"{post_hour}:00 (draft opens 30 min before)"),
-                ("Weekend IPO scorecard", "Sat/Sun after the slot" if ipo_on else "off (IPO_POSTS=false)"),
-                ("Metrics refresh", "every 6 h")]
+        jobs = describe.jobs(cfg, post_hour)
+        rules = describe.posting_rules(cfg)
         dbsize = (ROOT / "data" / "growth.db").stat().st_size / 1e6
     finally:
         c.close()
@@ -285,7 +255,7 @@ def render(d: dict) -> str:
     rows = "".join(f'<tr><td><span class="dot {s}"></span></td><td>{esc(n)}</td><td class="mut">{esc(t)}</td></tr>' for s, n, t in d["checks"])
     posts = "".join(
         f'<tr{" class=mutrow" if p["series"] == "ipo" else ""}><td>{esc(stamp(p["published_at"]))}</td>'
-        f'<td class="nw">{esc(GROUP_OF.get(p["series"] or "", p["series"] or "story"))}</td><td>{esc(p["style"])}</td>'
+        f'<td class="nw">{esc(describe.topic_group(p["series"]))}</td><td>{esc(p["style"])}</td>'
         f'<td class="hook">{"<a href=%s target=_blank>" % esc(p["url"]) if p["url"] else ""}{esc((p["hook"] or "")[:70])}{"</a>" if p["url"] else ""}</td>'
         f'<td class="n">{p["imp"] if p["imp"] is not None else "-"}</td><td class="n">{pct(p["oon"])}</td>'
         f'<td class="n">{p["rea"] or 0}</td><td class="n">{p["com"] or 0}</td><td class="n">{p["rep"] or 0}</td><td class="mut">{esc(ago(p["cap"]))}</td></tr>'
@@ -297,20 +267,13 @@ def render(d: dict) -> str:
             f'<tr><td>{esc(k)}</td><td class="n">{len(v)}</td><td class="n">{sum(p["imp"] for p in v) / len(v):.0f}</td>'
             f'<td class="n">{sum((p["rea"] or 0) for p in v) / len(v):.1f}</td></tr>' for k, v in rows_)
 
-    r = d["rules"]
     works = (f'<p class="mut" style="margin:0 0 8px">Domain posts only, latest reading per post. These averages are what set the '
              f'posting rules; groups with 1 or 2 posts are a hint, not proof.</p>'
              f'<div class="grid" style="margin-top:0"><table><tr><th>Topic</th><th class="n">Posts</th><th class="n">Avg impr.</th><th class="n">Avg react.</th></tr>'
              f'{works_rows(d["works"]["topic"]) or "<tr><td colspan=4 class=mut>no measured domain posts yet</td></tr>"}</table>'
              f'<table><tr><th>Style</th><th class="n">Posts</th><th class="n">Avg impr.</th><th class="n">Avg react.</th></tr>'
              f'{works_rows(d["works"]["style"]) or "<tr><td colspan=4 class=mut>no measured domain posts yet</td></tr>"}</table></div>')
-    rules_rows = [("Weekly mix", ", ".join(f"{v:g} {k}" for k, v in r["mix"].items()) + " (weekdays only)"),
-                  ("Styles allowed", ", ".join(r["styles"]) + "; contrarian, question and case_study are not drawn"),
-                  ("Openers allowed", ", ".join(r["hooks"])),
-                  ("Opener gate", "a draft whose first 4 words match any of the last 10 posts is redrafted"),
-                  ("Prompt", "first line names one specific number or thing; closes with a question answerable in under 10 words"),
-                  ("Posting time", "decided by the running 9:00 / 13:00 / 18:00 test, not by this page")]
-    rules_tbl = "".join(f'<tr><td class="nw">{esc(a)}</td><td class="mut">{esc(b)}</td></tr>' for a, b in rules_rows)
+    rules_tbl = "".join(f'<tr><td class="nw">{esc(a)}</td><td class="mut">{esc(b)}</td></tr>' for a, b in d["rules"])
     latest = d["followers"][0]["count"] if d["followers"] else 0
 
     def fol_row(r) -> str:  # a reading far from the newest one is a scrape error (an old parser once grabbed other accounts' counts)
@@ -386,7 +349,8 @@ th{{color:var(--mut);font-weight:600;font-size:12px}}tr:last-child td{{border-bo
 <section class="card wide"><h2>Growth proof (vs your starting point)</h2>{proof}</section>
 <section class="card wide"><h2>Gemini keys: which account does which job</h2><table><tr><th>Job</th><th>Google account</th><th>Key</th><th>Used for</th></tr>{keyrows}</table></section>
 <section class="card"><h2>Followers (last 7 readings)</h2><table>{fol}</table></section>
-<section class="card"><h2>{"Tracked IPOs" if d["ipo_on"] else "Posting rules (domain only)"}</h2><table>{ipo if d["ipo_on"] else rules_tbl}</table></section>
+<section class="card wide"><h2>Posting rules (read from the code)</h2><table>{rules_tbl}</table></section>
+{f'<section class="card"><h2>Tracked IPOs</h2><table>{ipo}</table></section>' if d["ipo_on"] else ""}
 <section class="card wide" id="ideas"><h2>Post ideas: veto what you do not want posted</h2>
 <p class="mut" style="margin:0 0 8px">Queued ideas are posted in the order the topic mix picks them. Veto keeps the idea (nothing is deleted) but the autopilot will never use it; Restore puts it back.</p>
 <table><tr><th>Series</th><th>Idea</th><th>State</th><th></th></tr>{ideas}</table></section>

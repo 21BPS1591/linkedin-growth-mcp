@@ -238,3 +238,26 @@ def test_repeated_opener_gate_and_pillar_arms():
     assert any("opens like a recent post" in r for r in gates.check_general(text, recent_openers=recent))
     assert not any("opens like a recent post" in r for r in gates.check_general(text))
     assert all(not k.startswith("contrarian|") for k in PILLAR_ARMS) and "story|number" in PILLAR_ARMS
+
+
+def test_dashboard_description_is_derived_from_the_code(monkeypatch, tmp_path):
+    """The dashboard must describe the code, not carry a copy of it: changing a constant changes the description."""
+    import re
+    from pathlib import Path
+    from linkedin_growth_mcp import autopilot, describe
+    from linkedin_growth_mcp.config import Config
+    from linkedin_growth_mcp.strategy import gates, topics
+
+    cfg = Config(data_dir=tmp_path, gemini_api_key="x", gemini_text_model="m", gemini_image_model="i", linkedin_client_id="",
+                 linkedin_client_secret="", linkedin_redirect_uri="http://x", linkedin_api_version="202510", mcp_auth_token="",
+                 max_posts_per_week=3, daily_gemini_call_cap=9, daily_browser_page_cap=9, ipo_posts=False)
+    rows = dict(describe.posting_rules(cfg))
+    assert "contrarian" in rows["Styles drawn"] and "contrarian" not in rows["Styles drawn"].split(";")[0]
+    assert f"first {gates.OPENER_WORDS} words" in rows["Opener gate"] and rows["Weekend scorecard"] == "off"
+    monkeypatch.setattr(autopilot, "PILLAR_ARMS", {"story|number"})
+    monkeypatch.setattr(topics, "TARGET", {"ipo": 0.0, "story": 5.0})
+    rows2 = dict(describe.posting_rules(cfg))
+    assert rows2["Styles drawn"].startswith("story;") and rows2["Weekly mix"].startswith("5 story")
+    assert describe.scope(cfg).startswith("domain only: 5 story")
+    src = Path(__file__).resolve().parents[1].joinpath("dashboard.py").read_text(encoding="utf-8")
+    assert not re.search(r"contrarian|listicle|how_to|bold_claim|IPO_POSTS=", src), "dashboard.py must not retype rules"

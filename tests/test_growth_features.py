@@ -261,3 +261,13 @@ def test_dashboard_description_is_derived_from_the_code(monkeypatch, tmp_path):
     assert describe.scope(cfg).startswith("domain only: 5 story")
     src = Path(__file__).resolve().parents[1].joinpath("dashboard.py").read_text(encoding="utf-8")
     assert not re.search(r"contrarian|listicle|how_to|bold_claim|IPO_POSTS=", src), "dashboard.py must not retype rules"
+
+
+def test_lint_general_is_soft_and_specific():
+    from linkedin_growth_mcp.strategy import gates
+    ok = "4 roles taught me one thing each.\n\nShort lines read well.\nThat is the point.\n\nWhich role taught you most?\n\n#Analytics"
+    assert gates.lint_general(ok) == []
+    long = "This single line runs on for far more than ten words without any break at all.\n\nDone."
+    hints = gates.lint_general(long)
+    assert len(hints) == 2 and f"longer than {gates.MAX_LINE_WORDS} words" in hints[0] and "not a question" in hints[1]
+    assert gates.check_general(ok) == []  # the lint never feeds the hard gate

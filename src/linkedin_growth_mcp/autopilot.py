@@ -1129,6 +1129,7 @@ class Autopilot:
         reasons: list[str] = []
         draft = None
         best: tuple[float, dict[str, Any], int] | None = None
+        lint_used = False  # the soft rules (line length, closing question) earn one rewrite per day, never a block
         for _ in range(MAX_BLOCKED_ATTEMPTS):
             cand = self.svc.propose_post(idea["id"], arms=PILLAR_ARMS, hints=reasons or None)
             tidy = polish(cand["text"])
@@ -1137,6 +1138,14 @@ class Autopilot:
                 cand["text"] = tidy
             reasons = gates.check_general(cand["text"], self.store.get_kv("banned_terms", []) or [], self.svc.idea_facts(idea),
                                          recent_openers=self.store.recent_openers(gates.RECENT_OPENERS))
+            if not reasons and not lint_used:
+                soft = gates.lint_general(cand["text"])
+                if soft:
+                    lint_used = True
+                    reasons = soft
+                    self.store.add_log("lint_redraft", "; ".join(soft)[:300], step="pillar", draft_id=cand["draft_id"])
+                    self.store.update_draft(cand["draft_id"], status="blocked")
+                    continue
             if not reasons:
                 self._log_ai_tells(cand)
                 keep, score, reasons = self._editor_round(cand, best)

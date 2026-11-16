@@ -44,7 +44,10 @@ def posting_rules(cfg: Config) -> list[tuple[str, str]]:
         ("Styles drawn", ", ".join(styles) + (f"; not drawn: {', '.join(not_drawn)}" if not_drawn else "")),
         ("Openers drawn", ", ".join(hooks) + (f"; not drawn: {', '.join(unused_hooks)}" if unused_hooks else "")),
         ("Opener rule (prompt)", draft_text.OPENER_RULE),
+        ("Line rule (prompt)", draft_text.LINE_RULE),
         ("Closer rule (prompt)", draft_text.CLOSER_RULE),
+        ("Soft lint", f"a line over {gates.MAX_LINE_WORDS} words or a last line that is not a question earns one rewrite with hints; "
+                      "a second miss is accepted, so these never cost the day's post"),
         ("Opener gate", f"a draft whose first {gates.OPENER_WORDS} words match any of the last {gates.RECENT_OPENERS} posts is redrafted"),
         ("Form gates", f"{lo} to {hi} characters, at most {gates.MAX_HASHTAGS} hashtags, no links or mentions, no em or en dashes, "
                        "no advice wording, every number sourced from the story bank"),

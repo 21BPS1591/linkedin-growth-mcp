@@ -10,6 +10,7 @@ from google.genai import errors, types
 
 from ..config import Config
 from ..store.db import Store
+from ..strategy.gates import MAX_LINE_WORDS
 from ..strategy.styles import HOOKS, STYLES
 from .keys import KeyMissing, count_model_use, model_at_daily_limit, rpm_guard, throttle
 from .retry import with_retry
@@ -25,7 +26,10 @@ OPENER_RULE = (
     "'I used to think', 'Are you still', 'Should you', a greeting, or the first words of any RECENT POST. No vague question "
     "as the first line."
 )
-CLOSER_RULE = "end with ONE question the reader can answer in under ten words from their own experience (never 'what do you think?')."
+CLOSER_RULE = ("end with one short punchy line that lands the point, then ONE question the reader can answer in under ten "
+               "words from their own experience (never 'what do you think?').")
+LINE_RULE = (f"no line longer than {MAX_LINE_WORDS} words (mobile readers see about that many per row); one to three lines "
+             "per paragraph; a line break is a pause, not a new sentence rule, so keep the plain sentences.")
 
 
 class GeminiText:
@@ -161,7 +165,7 @@ class GeminiText:
             topic + rules_block + hints_block + voice_block + formula_hint +
             "Write one LinkedIn post for this person, in their voice.\n"
             f"STYLE: {style} - {STYLES[style]}\nHOOK: {hook} - {HOOKS[hook]}\n"
-            f"OPENER: {OPENER_RULE}\nCLOSER: {CLOSER_RULE}\n"
+            f"OPENER: {OPENER_RULE}\nLINES: {LINE_RULE}\nCLOSER: {CLOSER_RULE}\n"
             "Rules: short paragraphs; never use em dashes or en dashes; no hashtags spam (max 3 at the end); "
             "no clickbait lies; concrete details over generalities; " + ("900-1300 characters, ONE idea, a few short paragraphs, no numbered list; " if short else "900-1500 characters; ") + "do not repeat "
             "topics from RECENT POSTS; never touch the NO-GO topics.\n"

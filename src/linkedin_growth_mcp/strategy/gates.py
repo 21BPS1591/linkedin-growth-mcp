@@ -110,6 +110,24 @@ HASHTAG = re.compile(r"(?<!\w)#\w+")
 GENERAL_LENGTH = (350, 3000)  # characters a post may have
 MAX_HASHTAGS = 3
 RECENT_OPENERS = 10  # how many recent posts the repeat-opener gate compares against
+MAX_LINE_WORDS = 10  # lint, not a gate: a line longer than this is sent back for one rewrite, then accepted as is
+
+
+def lint_general(text: str) -> list[str]:
+    """Soft checks for non-IPO posts. A hit earns ONE redraft with these hints; a second hit never blocks the post.
+
+    Form only: line length (mobile readers see about ten words per row) and the closing shape (a question last,
+    so the post asks for a comment)."""
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip() and not HASHTAG.match(ln.strip())]
+    hints: list[str] = []
+    long = [ln for ln in lines if len(ln.split()) > MAX_LINE_WORDS]
+    if long:
+        hints.append(f"{len(long)} line(s) longer than {MAX_LINE_WORDS} words: break each into lines of at most "
+                     f"{MAX_LINE_WORDS} words, e.g. '{long[0][:60]}...'")
+    if lines and not lines[-1].rstrip().endswith("?"):
+        hints.append("the last line is not a question: end with one short punchy line, then one question the reader "
+                     "can answer in under ten words")
+    return hints
 BARE_OPEN = re.compile(r"^[^\w₹$]{0,3}[₹$]?\s?\d")
 MANY_DECIMALS = re.compile(r"(?<![\w.])\d[\d,]*\.\d{3,}")
 PROCEEDS_CLAIM = re.compile(

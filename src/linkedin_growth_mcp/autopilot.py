@@ -683,6 +683,10 @@ class Autopilot:
         except Exception as e:
             self.store.add_log("replies_error", str(e)[:200])
         try:
+            self.engage_if_due()
+        except Exception as e:
+            self.store.add_log("engage_error", str(e)[:200])
+        try:
             self.auto_experiments_if_due()
         except Exception as e:
             self.store.add_log("experiment_error", str(e)[:200])
@@ -907,6 +911,106 @@ class Autopilot:
         self.store.add_log("followers", f"{res['followers']} followers"
                            + (f" ({res['change']:+d} since the last reading)" if res["change"] is not None else ""))
         return int(res["followers"])
+
+    def engage_if_due(self, dry_run: bool = False, force: bool = False) -> dict[str, Any] | None:
+        """Comment on strong posts in the owner's niche, automatically, up to a daily cap.
+
+        Live mode only, every day. Polled every 5 minutes (and 60 seconds after start-up, so the first comment goes out when the
+        laptop opens): one comment an hour after the last one posted, at most `engage_daily_cap` a day. A session finds posts
+        with traction, reads them in full, drafts and checks a comment, then posts it. Two failures stop the day's engagement."""
+        from .linkedin import engage
+        from .linkedin.browser import LoginExpired
+        from .strategy import commenting
+
+        cfg, st = self.cfg, self.store
+        now = datetime.now()
+        if not force and (not cfg.engage or self.mode() != "live"
+                          or not (cfg.engage_hours[0] <= now.hour < cfg.engage_hours[1])):
+            return None
+        today = date.today().isoformat()
+        if st.get_kv("engage_stopped", "") == today and not force:
+            return None
+        left = cfg.engage_daily_cap - st.usage_today("engage_comment")
+        if left <= 0 or not self._key_ready("insights"):
+            return None
+        # one comment an hour, counted from the last comment actually posted; a session that found nothing or failed retries after 10 minutes
+        if not force and (time.time() - float(st.get_kv("engage_last_posted", 0)) < cfg.engage_gap_minutes * 60
+                          or time.time() - float(st.get_kv("engage_last_run", 0)) < 10 * 60):
+            return None
+        st.set_kv("engage_last_run", time.time())
+        try:
+            st.bump_usage("engage_page", 6)  # searches per day, apart from the analytics page cap
+        except RuntimeError:
+            return None
+        history = st.get_kv("engage_done", []) or []
+        done = {h["key"] for h in history}
+        week_ago = time.time() - engage.AUTHOR_COOLDOWN_DAYS * 86400
+        recent_authors = {h["author"].strip().lower() for h in history if h["ts"] > week_ago and h.get("ok")}
+        recent_texts = [h["text"] for h in history[-40:] if h.get("ok")]
+        banned = st.get_kv("banned_terms", []) or []
+        profile = (st.get_kv("profile", {}) or {}).get("raw_text", "")
+        owner = profile.strip().splitlines()[0].strip() if profile.strip() else ""
+        n = min(left, cfg.engage_per_run)
+        runs_today = int(st.get_kv(f"engage_runs_{today}", 0))
+        st.set_kv(f"engage_runs_{today}", runs_today + 1)
+        keywords = engage.keywords_for(date.today().toordinal(), runs_today)
+        voice = json.dumps((st.get_kv("voice_fingerprint", {}) or {}).get("notes", ""))
+
+        def choose(cands: list[dict[str, Any]]) -> list[tuple[dict[str, Any], str]]:
+            used = [h.get("shape", "") for h in history[-len(commenting.SHAPES):] if h.get("ok")]
+            shapes = commenting.pick_shapes(len(cands), used)
+            prompt = commenting.build_prompt(cands, (st.get_kv("story_bank", "") or ""), voice, n + 1, shapes, recent_texts)
+            raw = self.svc.text._json(prompt)  # content key, stronger model: this is the account's public voice
+            drafted = []
+            for it in (raw.get("comments") or []):
+                try:
+                    c, text = cands[int(it["i"])], engage.tidy_comment(str(it["comment"]))
+                except (KeyError, ValueError, IndexError, TypeError):
+                    continue
+                why = engage.comment_problems(text, banned, recent_texts)
+                if why:
+                    st.add_log("engage_rejected", f"{c['author']}: {'; '.join(why)}: {text[:120]}", step="engage")
+                    continue
+                c["shape"] = shapes[int(it["i"]) % len(shapes)]
+                drafted.append((int(it["i"]), c, text))
+            if not drafted:
+                return []
+            verdicts = self.svc.text._json(commenting.judge_prompt(
+                [{"i": i, "post": c["text"][:1800], "comment": t} for i, c, t in drafted]))
+            keep = {int(v["i"]): v for v in (verdicts.get("verdicts") or []) if str(v.get("i", "")).lstrip("-").isdigit()}
+            plan = []
+            for i, c, text in drafted:
+                v = keep.get(i)
+                if v and v.get("keep") is True:
+                    plan.append((c, text))
+                else:
+                    st.add_log("engage_rejected", f"{c['author']}: editor said no ({(v or {}).get('reason', 'no verdict')}): {text[:120]}", step="engage")
+            return plan
+
+        def on_posted(c: dict[str, Any], text: str, ok: bool) -> None:
+            h = st.get_kv("engage_done", []) or []
+            h.append({"key": c["key"], "author": c["author"], "ts": time.time(), "text": text, "ok": ok, "reactions": c["reactions"], "shape": c.get("shape", "")})
+            st.set_kv("engage_done", h[-300:])
+            if ok:
+                st.set_kv("engage_last_posted", time.time())
+                st.bump_usage("engage_comment", cfg.engage_daily_cap)
+                st.add_log("engage_comment", f"{c['author']} ({c['reactions']} reactions): {text}", step="engage")
+            else:
+                st.add_log("engage_failed", f"could not post on {c['author']}'s post", step="engage")
+
+        try:
+            res = asyncio.run(engage.run_session(self.svc.browser, keywords, choose, owner, done, recent_authors, banned, n,
+                                                 on_posted, dry_run=dry_run))
+        except LoginExpired as e:
+            self._alert("session_expired", "LinkedIn browser login expired", str(e))
+            return {"action": "login_expired"}
+        if not dry_run:
+            st.add_log("engage_run", f"'{res['keyword']}': {res['seen']} posts seen, {res['candidates']} fit, {res['planned']} drafted, "
+                       f"{res['posted']} posted, {res['failed']} failed" + (f" ({res['error']})" if res.get("error") else ""), step="engage")
+            if res["failed"] >= 2 and res["posted"] == 0:
+                st.set_kv("engage_stopped", today)
+                self._alert("engage_stopped", "Comment automation paused for today", "Two comments failed to post; the page layout may have changed.")
+        return res
 
     def watch_comments(self) -> dict[str, Any] | None:
         """Score the conversation under the newest young post: comment quality, and how well the owner replied.

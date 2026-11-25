@@ -110,6 +110,7 @@ HASHTAG = re.compile(r"(?<!\w)#\w+")
 GENERAL_LENGTH = (350, 3000)  # characters a post may have
 MAX_HASHTAGS = 3
 RECENT_OPENERS = 10  # how many recent posts the repeat-opener gate compares against
+LINE_RULE_ENABLED = False  # owner decision 2026-11-25: the 10-word line rule is off (reach did not improve under it)
 MAX_LINE_WORDS = 10  # lint, not a gate: a line longer than this is sent back for one rewrite, then accepted as is
 
 
@@ -120,7 +121,7 @@ def lint_general(text: str) -> list[str]:
     so the post asks for a comment)."""
     lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip() and not HASHTAG.match(ln.strip())]
     hints: list[str] = []
-    long = [ln for ln in lines if len(ln.split()) > MAX_LINE_WORDS]
+    long = [ln for ln in lines if len(ln.split()) > MAX_LINE_WORDS] if LINE_RULE_ENABLED else []
     if long:
         hints.append(f"{len(long)} line(s) longer than {MAX_LINE_WORDS} words: break each into lines of at most "
                      f"{MAX_LINE_WORDS} words, e.g. '{long[0][:60]}...'")

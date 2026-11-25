@@ -10,7 +10,7 @@ from google.genai import errors, types
 
 from ..config import Config
 from ..store.db import Store
-from ..strategy.gates import MAX_LINE_WORDS
+from ..strategy.gates import LINE_RULE_ENABLED, MAX_LINE_WORDS
 from ..strategy.styles import HOOKS, STYLES
 from .keys import KeyMissing, count_model_use, model_at_daily_limit, rpm_guard, throttle
 from .retry import with_retry
@@ -28,7 +28,8 @@ OPENER_RULE = (
 )
 CLOSER_RULE = ("end with one short punchy line that lands the point, then ONE question the reader can answer in under ten "
                "words from their own experience (never 'what do you think?').")
-LINE_RULE = (f"no line longer than {MAX_LINE_WORDS} words (mobile readers see about that many per row); one to three lines "
+LINE_RULE = ("short paragraphs of one to three lines; write plain natural sentences, no forced line breaks." if not LINE_RULE_ENABLED else
+             f"no line longer than {MAX_LINE_WORDS} words (mobile readers see about that many per row); one to three lines "
              "per paragraph; a line break is a pause, not a new sentence rule, so keep the plain sentences.")
 
 

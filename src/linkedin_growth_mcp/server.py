@@ -419,6 +419,13 @@ async def _serve_http(host: str, port: int) -> None:
     lead = cfg.post_hour * 60 - 30  # the draft window opens 30 minutes before the posting hour (autopilot.DRAFT_LEAD_MINUTES)
     if lead >= 0:
         sched.add_job(_tick, "cron", hour=lead // 60, minute=lead % 60, id="autopilot_lead", max_instances=1, coalesce=True)
+    async def _engage():
+        await asyncio.to_thread(svc.autopilot.engage_if_due)
+
+    # comment automation: first look 60 s after start-up (laptop opens), then every 5 minutes; the hourly spacing is enforced inside
+    sched.add_job(_engage, "interval", minutes=5, id="engage", max_instances=1, coalesce=True,
+                  next_run_time=datetime.now() + timedelta(seconds=60))
+
     async def _scheduled():
         await asyncio.to_thread(svc.autopilot.publish_scheduled)
 

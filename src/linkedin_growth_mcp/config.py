@@ -40,6 +40,11 @@ class Config:
     ipo_posts: bool = True  # False = never draft or publish IPO posts or the weekend IPO scorecard; only the pillar (domain) topics post
     ipo_max_per_week: int = 2  # quality over quantity: at most this many IPO posts in any 7 days
     ipo_min_quality: float = 6.0  # an IPO must score at least this (0-10, autopilot.ipo_quality) to get a post
+    engage: bool = True  # find strong posts in the niche and comment on them automatically (live mode only)
+    engage_daily_cap: int = 6  # most comments left on other people's posts per day
+    engage_per_run: int = 1  # most comments in one browser session
+    engage_gap_minutes: int = 60  # minutes between one posted comment and the next
+    engage_hours: tuple[int, int] = (7, 23)  # sessions only start in this local hour window
     comment_watch_hours: int = 36  # how long after publishing a post is checked for new comments
     comment_check_minutes: int = 120  # minimum gap between two comment checks (each one costs a browser page)
     # One Gemini key per kind of work, so one key's quota is never spent on another's job. The account fields only record
@@ -196,6 +201,10 @@ def load_config() -> Config:
         ipo_posts=_env("IPO_POSTS", "true").lower() in ("1", "true", "yes", "on"),
         ipo_max_per_week=int(_env("IPO_MAX_PER_WEEK", "2")),
         ipo_min_quality=float(_env("IPO_MIN_QUALITY", "6")),
+        engage=_env("ENGAGE", "true").lower() in ("1", "true", "yes", "on"),
+        engage_daily_cap=int(_env("ENGAGE_DAILY_CAP", "6")),
+        engage_per_run=int(_env("ENGAGE_PER_RUN", "1")),
+        engage_gap_minutes=int(_env("ENGAGE_GAP_MINUTES", "60")),
         comment_watch_hours=int(_env("COMMENT_WATCH_HOURS", "36")),
         comment_check_minutes=int(_env("COMMENT_CHECK_MINUTES", "120")),
     )

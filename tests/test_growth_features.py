@@ -268,7 +268,14 @@ def test_lint_general_is_soft_and_specific():
     ok = "4 roles taught me one thing each.\n\nShort lines read well.\nThat is the point.\n\nWhich role taught you most?\n\n#Analytics"
     assert gates.lint_general(ok) == []
     long = "This single line runs on for far more than ten words without any break at all.\n\nDone."
+    assert not gates.LINE_RULE_ENABLED  # owner turned the line-length rule off
     hints = gates.lint_general(long)
-    assert len(hints) == 2 and f"longer than {gates.MAX_LINE_WORDS} words" in hints[0] and "not a question" in hints[1]
+    assert len(hints) == 1 and "not a question" in hints[0]
+    gates.LINE_RULE_ENABLED = True
+    try:
+        hints = gates.lint_general(long)
+        assert len(hints) == 2 and f"longer than {gates.MAX_LINE_WORDS} words" in hints[0] and "not a question" in hints[1]
+    finally:
+        gates.LINE_RULE_ENABLED = False
     hard = gates.check_general(long)  # the lint never feeds the hard gate: its findings are not among the blocking reasons
     assert not any("words" in r or "question" in r for r in hard)

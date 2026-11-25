@@ -46,8 +46,11 @@ def posting_rules(cfg: Config) -> list[tuple[str, str]]:
         ("Opener rule (prompt)", draft_text.OPENER_RULE),
         ("Line rule (prompt)", draft_text.LINE_RULE),
         ("Closer rule (prompt)", draft_text.CLOSER_RULE),
-        ("Soft lint", f"a line over {gates.MAX_LINE_WORDS} words or a last line that is not a question earns one rewrite with hints; "
+        ("Soft lint", ("a line over %d words or a last line" % gates.MAX_LINE_WORDS if gates.LINE_RULE_ENABLED else "a last line") + f" that is not a question earns one rewrite with hints; "
                       "a second miss is accepted, so these never cost the day's post"),
+        ("Comment automation", (f"on: one comment an hour on strong niche posts (25+ reactions, under 4 days old), at most {cfg.engage_daily_cap} a day, "
+                                f"the first when the laptop opens, one per author a week, {cfg.engage_hours[0]}:00 to {cfg.engage_hours[1]}:00"
+                                if cfg.engage else "off")),
         ("Opener gate", f"a draft whose first {gates.OPENER_WORDS} words match any of the last {gates.RECENT_OPENERS} posts is redrafted"),
         ("Form gates", f"{lo} to {hi} characters, at most {gates.MAX_HASHTAGS} hashtags, no links or mentions, no em or en dashes, "
                        "no advice wording, every number sourced from the story bank"),

@@ -70,7 +70,9 @@ def judge_prompt(items: list[dict[str, Any]]) -> str:
         "For each item decide keep=true only if ALL hold: (1) it uses a specific detail that is really in the post; "
         "(2) it adds a concrete example, caveat or narrow question, not a generic statement; (3) it does not contradict or "
         "belittle the author; (4) every factual claim is true or general knowledge, with no invented personal experience; "
-        "(5) it would not look like spam or AI filler to the author.",
+        "(5) it would not look like spam or AI filler to the author; (6) the author would find it genuinely useful or interesting, "
+        "not obvious or filler. Give each a score from 1 to 10 for how good it is as a public comment; 8 or more only for "
+        "comments you would be happy to see under your own name.",
         "ITEMS (JSON): " + json.dumps(items, ensure_ascii=False),
-        'Return JSON only: {"verdicts":[{"i":<index>,"keep":true|false,"reason":"<short>"}]}.',
+        'Return JSON only: {"verdicts":[{"i":<index>,"score":<1-10>,"keep":true|false,"reason":"<short>"}]}.',
     ])

@@ -84,3 +84,11 @@ def test_variety_rules():
     shapes = commenting.pick_shapes(3, [commenting.SHAPES[0], commenting.SHAPES[1]])
     assert len(set(shapes)) == 3 and commenting.SHAPES[0] not in shapes and commenting.SHAPES[1] not in shapes
     assert "required_shape" in commenting.build_prompt([card()], "f", "v", 1, shapes, [a])
+
+
+def test_grounding_checks():
+    post = "I rebuilt our month end report in Power BI and cut the refresh from 40 minutes to 4 using incremental refresh."
+    good = "Incremental refresh is what makes month end reports in Power BI manageable. Did you partition by month?"
+    assert engage.comment_problems(good, [], [], post) == []
+    assert any("not grounded" in w for w in engage.comment_problems("Dashboards help teams decide faster when numbers stay consistent everyday.", [], [], post))
+    assert any("figure not in the post" in w for w in engage.comment_problems(good + " We saw 73 percent savings.", [], [], post))

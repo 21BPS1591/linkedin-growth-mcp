@@ -917,7 +917,7 @@ class Autopilot:
 
         Live mode only, every day. Polled every 5 minutes (and 60 seconds after start-up, so the first comment goes out when the
         laptop opens): one comment an hour after the last one posted, at most `engage_daily_cap` a day. A session finds posts
-        with traction, reads them in full, drafts and checks a comment, then posts it. Two failures stop the day's engagement."""
+        with traction, reads them in full, drafts and checks a comment, then posts it. A failure never stops it: it retries every 10 minutes."""
         from .linkedin import engage
         from .linkedin.browser import LoginExpired
         from .strategy import commenting
@@ -928,8 +928,6 @@ class Autopilot:
                           or not (cfg.engage_hours[0] <= now.hour < cfg.engage_hours[1])):
             return None
         today = date.today().isoformat()
-        if st.get_kv("engage_stopped", "") == today and not force:
-            return None
         left = cfg.engage_daily_cap - st.usage_today("engage_comment")
         if left <= 0 or not self._key_ready("insights"):
             return None
@@ -939,7 +937,7 @@ class Autopilot:
             return None
         st.set_kv("engage_last_run", time.time())
         try:
-            st.bump_usage("engage_page", 6)  # searches per day, apart from the analytics page cap
+            st.bump_usage("engage_page", 24)  # sessions per day (each searches up to 3 keywords), apart from the analytics page cap
         except RuntimeError:
             return None
         history = st.get_kv("engage_done", []) or []
@@ -967,7 +965,7 @@ class Autopilot:
                     c, text = cands[int(it["i"])], engage.tidy_comment(str(it["comment"]))
                 except (KeyError, ValueError, IndexError, TypeError):
                     continue
-                why = engage.comment_problems(text, banned, recent_texts)
+                why = engage.comment_problems(text, banned, recent_texts, c["text"])
                 if why:
                     st.add_log("engage_rejected", f"{c['author']}: {'; '.join(why)}: {text[:120]}", step="engage")
                     continue
@@ -981,7 +979,11 @@ class Autopilot:
             plan = []
             for i, c, text in drafted:
                 v = keep.get(i)
-                if v and v.get("keep") is True:
+                try:
+                    score = float(v.get("score", 0)) if v else 0
+                except (TypeError, ValueError):
+                    score = 0
+                if v and v.get("keep") is True and score >= engage.MIN_JUDGE_SCORE:
                     plan.append((c, text))
                 else:
                     st.add_log("engage_rejected", f"{c['author']}: editor said no ({(v or {}).get('reason', 'no verdict')}): {text[:120]}", step="engage")
@@ -1007,9 +1009,8 @@ class Autopilot:
         if not dry_run:
             st.add_log("engage_run", f"'{res['keyword']}': {res['seen']} posts seen, {res['candidates']} fit, {res['planned']} drafted, "
                        f"{res['posted']} posted, {res['failed']} failed" + (f" ({res['error']})" if res.get("error") else ""), step="engage")
-            if res["failed"] >= 2 and res["posted"] == 0:
-                st.set_kv("engage_stopped", today)
-                self._alert("engage_stopped", "Comment automation paused for today", "Two comments failed to post; the page layout may have changed.")
+            if res["failed"] and not res["posted"]:  # never stops: the next attempt follows in 10 minutes; one alert a day so a broken page is noticed
+                self._alert("engage_failing", "Comment automation is failing to post", "It keeps retrying every 10 minutes; see engage_run in the log.")
         return res
 
     def watch_comments(self) -> dict[str, Any] | None:

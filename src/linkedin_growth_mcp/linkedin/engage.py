@@ -23,6 +23,9 @@ KEYWORDS = (
     "business analyst", "excel dashboard", "dax power bi", "sql for analysts", "ai for data analysts",
     "fresher data analyst", "kpi dashboard", "financial analysis",
 )
+from pathlib import Path
+
+DEBUG_SHOT = Path(__file__).resolve().parents[3] / "data" / "engage_fail.png"
 SEARCH = "https://www.linkedin.com/search/results/content/?keywords={q}&datePosted=%22past-week%22&sortBy=%22relevance%22"
 
 MIN_REACTIONS = 25      # "getting great impressions": reactions are the visible proxy for reach
@@ -30,6 +33,7 @@ MAX_COMMENTS = 60       # a post with a big thread buries a new comment
 MAX_AGE_HOURS = 96      # a comment on an old post is read by nobody
 MIN_BODY_CHARS = 200
 MAX_WORDS, MIN_WORDS = 60, 8
+MIN_JUDGE_SCORE = 8     # the editor pass must rate a comment at least this (1 to 10) or it is not posted
 MAX_QUESTION_STREAK = 1  # after this many question-ending comments in a row, the next must not end with one
 AUTHOR_COOLDOWN_DAYS = 7
 
@@ -40,6 +44,7 @@ _SKIP_POST = re.compile(
     r"comment (below )?to (get|receive)|dm me|link in (the )?comments?|course|bootcamp|rest in peace|RIP|passed away|"
     r"condolence|layoff|laid off|election|politic|religio)\w*", re.IGNORECASE)
 _SKIP_AUTHOR = re.compile(r"recruit|talent acquisition|hr|hiring|staffing|headhunt|career coach|placement", re.IGNORECASE)
+_COMMON = frozenset("which where would could should about their there these those other using often always never really helps works great while still every because before after between through across within without often usually simple clear better easier faster matter things thing makes check build"              .split())
 _GENERIC_OPEN = re.compile(r"^\W*(great|nice|good|awesome|amazing|love this|insightful|thanks for sharing|well said|congrat)", re.IGNORECASE)
 _LINKS = re.compile(r"https?://|www\.|@\w|#\w")
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿]")
@@ -107,7 +112,7 @@ def pick_candidates(cards: list[dict[str, Any]], *, owner: str, done_keys: set[s
     return out[:limit]
 
 
-def comment_problems(text: str, banned: list[str], recent: list[str]) -> list[str]:
+def comment_problems(text: str, banned: list[str], recent: list[str], post: str | None = None) -> list[str]:
     """Why a drafted comment must not be posted. Empty list = fine."""
     from ..strategy import aitells, gates
 
@@ -125,6 +130,15 @@ def comment_problems(text: str, banned: list[str], recent: list[str]) -> list[st
     tells = aitells.lint_ai_tells(t)
     if [f for f in tells["flags"] if f != "no_closing_question"]:
         why.append("AI tells: " + ", ".join(f for f in tells["flags"] if f != "no_closing_question")[:80])
+    if post is not None:  # grounding: it must visibly come from THIS post, and must not bring in figures the post never gave
+        words_c = {w for w in re.findall(r"[a-z]{5,}", t.lower()) if w not in _COMMON}
+        words_p = set(re.findall(r"[a-z]{5,}", post.lower()))
+        if len(words_c & words_p) < 2:
+            why.append("not grounded in the post (shares fewer than 2 distinctive words with it)")
+        post_nums = set(re.findall(r"\d+(?:\.\d+)?", post))
+        extra = [n for n in re.findall(r"\d+(?:\.\d+)?", t) if n not in post_nums]
+        if extra:
+            why.append("figure not in the post: " + ", ".join(extra[:3]))
     opener = " ".join(re.findall(r"[a-z']+", t.lower())[:3])
     if opener and any(" ".join(re.findall(r"[a-z']+", r.lower())[:3]) == opener for r in recent[-12:]):
         why.append("same opening words as a recent comment")
@@ -187,9 +201,21 @@ async def _post_comment(page, c: dict[str, Any], text: str) -> bool:
     card = page.locator(f'div[role=listitem][data-eng="{fresh["idx"]}"]')
     await card.scroll_into_view_if_needed()
     await asyncio.sleep(random.uniform(1.0, 2.5))
-    await card.get_by_role("button", name="Comment", exact=True).first.click()
-    editor = card.locator(".tiptap.ProseMirror").first
-    await editor.wait_for(timeout=10_000)
+    editor = card.locator(".tiptap.ProseMirror, [aria-label='Text editor for creating comment']").first
+    for attempt in range(3):  # the box sometimes needs a second click, or the first click lands before the page is ready
+        if await editor.count() == 0:
+            await card.get_by_role("button", name="Comment", exact=True).first.click()
+        try:
+            await editor.wait_for(timeout=6_000)
+            break
+        except Exception:
+            if attempt == 2:
+                try:  # leave evidence of what the page looked like
+                    await page.screenshot(path=str(DEBUG_SHOT))
+                except Exception:
+                    pass
+                raise
+            await asyncio.sleep(random.uniform(1.5, 3.0))
     await editor.click()
     await page.keyboard.type(text, delay=random.randint(25, 70))
     await asyncio.sleep(random.uniform(1.5, 3.0))

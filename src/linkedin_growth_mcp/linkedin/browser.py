@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import threading
 
 from patchright.async_api import BrowserContext, async_playwright
 
@@ -17,11 +18,26 @@ class LoginExpired(RuntimeError):
     """The saved LinkedIn login was redirected to a login or checkpoint page."""
 
 
+class _ThreadSafeAsyncLock:
+    """Serialises page operations across threads AND event loops. The scheduler runs jobs in worker threads that each
+    call asyncio.run(), so an asyncio.Lock (bound to one loop) fails with 'bound to a different event loop'."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    async def __aenter__(self) -> None:
+        while not self._lock.acquire(blocking=False):
+            await asyncio.sleep(0.25)
+
+    async def __aexit__(self, *exc) -> None:
+        self._lock.release()
+
+
 class LinkedInBrowser:
     def __init__(self, cfg: Config, store: Store):
         self.cfg = cfg
         self.store = store
-        self._lock = asyncio.Lock()  # one page operation at a time
+        self._lock = _ThreadSafeAsyncLock()  # one page operation at a time
 
     async def _context(self, pw, headless: bool) -> BrowserContext:
         ctx = await pw.chromium.launch_persistent_context(

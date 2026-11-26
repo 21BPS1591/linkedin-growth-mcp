@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -205,9 +206,28 @@ CREATE TABLE IF NOT EXISTS usage (day TEXT NOT NULL, kind TEXT NOT NULL, n INTEG
 
 class Store:
     def __init__(self, path: Path | str):
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        self._path = str(path)
+        self._local = threading.local()
+        self._shared: sqlite3.Connection | None = None
+        if self._path == ":memory:":  # an in-memory db exists only on its own connection
+            self._shared = self._open()
         self.conn.executescript(SCHEMA)
+
+    def _open(self) -> sqlite3.Connection:
+        c = sqlite3.connect(self._path, check_same_thread=False, timeout=30)
+        c.row_factory = sqlite3.Row
+        return c
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """One connection per thread: the scheduler runs jobs in worker threads, and a connection shared between
+        them fails with 'InterfaceError: bad parameter or other API misuse'."""
+        if self._shared is not None:
+            return self._shared
+        c = getattr(self._local, "c", None)
+        if c is None:
+            c = self._local.c = self._open()
+        return c
 
     # --- key/value (interests, profile snapshot) ---
     def set_kv(self, key: str, value: Any) -> None:

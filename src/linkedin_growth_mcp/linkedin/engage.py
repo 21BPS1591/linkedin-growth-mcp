@@ -201,12 +201,23 @@ async def _post_comment(page, c: dict[str, Any], text: str) -> bool:
     card = page.locator(f'div[role=listitem][data-eng="{fresh["idx"]}"]')
     await card.scroll_into_view_if_needed()
     await asyncio.sleep(random.uniform(1.0, 2.5))
-    editor = card.locator(".tiptap.ProseMirror, [aria-label='Text editor for creating comment']").first
+    editor = card.locator(
+        ".tiptap.ProseMirror, [aria-label='Text editor for creating comment'], div[role=textbox][contenteditable=true]"
+    ).first
     for attempt in range(3):  # the box sometimes needs a second click, or the first click lands before the page is ready
         if await editor.count() == 0:
-            await card.get_by_role("button", name="Comment", exact=True).first.click()
+            btn = card.locator("button[aria-label='Comment'], button[aria-label^='Comment'], button[aria-label*='comment' i]").first
+            if await btn.count() == 0:
+                btn = card.get_by_role("button", name=re.compile(r"^Comment\b")).first
+            # very tall posts put the action bar at the card's bottom edge: bring the button itself into view
+            await btn.scroll_into_view_if_needed()
+            await asyncio.sleep(random.uniform(0.5, 1.2))
+            try:
+                await btn.click(timeout=5_000)
+            except Exception:
+                await btn.evaluate("b=>b.click()")  # covered by the sticky Messaging bar or similar
         try:
-            await editor.wait_for(timeout=6_000)
+            await editor.wait_for(timeout=8_000)
             break
         except Exception:
             if attempt == 2:
